@@ -1,0 +1,25 @@
+# GInRec Simplified Configuration
+
+data:
+  data_dir: "amazon-book"
+  
+model:
+  entity_dim: 64
+  autoencoder_dims: [128, 32]
+  conv_dims: [32, 16]
+  dropout: 0.1
+  gate_type: "concat"
+
+training:
+  n_epochs: 100
+  batch_size: 8
+  learning_rate: 0.001
+  ae_weight: 0.001
+  early_stopping: 10
+  
+evaluation:
+  k: 20
+  eval_interval: 5
+
+device:
+  use_cuda: true
