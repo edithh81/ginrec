@@ -100,16 +100,37 @@ class GInRecDataLoader:
         return adj_list, adj_relation, n_nodes
     
     def get_train_samples(self, n_neg_samples=1):
-        """Generate training samples with negative sampling"""
+        """Generate training samples with negative sampling - OPTIMIZED"""
+        print(f"[DEBUG] Generating training samples with {n_neg_samples} negative samples per positive...")
+        
         samples = []
-        all_items = set(range(len(self.items)))
+        all_items = np.arange(len(self.items))
         
+        # Pre-compute for faster sampling
+        print(f"[DEBUG] Pre-computing negative item pools...")
         for user_id, pos_items in self.train_data.items():
-            user_items = set(pos_items)
-            neg_pool = list(all_items - user_items)
+            pos_items_set = set(pos_items)
+            # Create boolean mask for faster filtering
+            neg_mask = np.ones(len(self.items), dtype=bool)
+            neg_mask[list(pos_items_set)] = False
+            neg_pool = all_items[neg_mask]
             
-            for pos_item in pos_items:
-                neg_items = np.random.choice(neg_pool, n_neg_samples, replace=False)
-                samples.append((user_id, pos_item, neg_items))
+            # Vectorized sampling
+            if len(neg_pool) >= n_neg_samples * len(pos_items):
+                # Sample all negatives at once for this user
+                all_neg_items = np.random.choice(neg_pool, 
+                                                 size=n_neg_samples * len(pos_items), 
+                                                 replace=False)
+                
+                for idx, pos_item in enumerate(pos_items):
+                    neg_items = all_neg_items[idx * n_neg_samples:(idx + 1) * n_neg_samples]
+                    samples.append((user_id, pos_item, neg_items))
+            else:
+                # Fallback for users with very few negative items
+                for pos_item in pos_items:
+                    sample_size = min(n_neg_samples, len(neg_pool))
+                    neg_items = np.random.choice(neg_pool, sample_size, replace=False)
+                    samples.append((user_id, pos_item, neg_items))
         
+        print(f"[DEBUG] Generated {len(samples)} training samples")
         return samples

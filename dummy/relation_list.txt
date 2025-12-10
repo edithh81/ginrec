@@ -1,0 +1,11 @@
+relation	remap_id
+relation_0	0
+relation_1	1
+relation_2	2
+relation_3	3
+relation_4	4
+relation_5	5
+relation_6	6
+relation_7	7
+relation_8	8
+relation_9	9

@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from data_loader import GInRecDataLoader
 from ginrec_simple import GInRecSimple
+from utils import parse_args, set_seed, create_directories, print_model_summary, EarlyStopping, log_metrics
 
 def train_epoch(model, optimizer, train_samples, adj_list, adj_relation, 
                 n_entities, batch_size=1024, ae_weight=0.001):
@@ -88,11 +89,23 @@ def evaluate(model, test_data, adj_list, adj_relation, k=20):
     print(f"[DEBUG] Evaluation completed: avg_recall={np.mean(recalls):.4f}, avg_ndcg={np.mean(ndcgs):.4f}")
     return np.mean(recalls), np.mean(ndcgs)
 
-def main(data_dir, n_epochs=100, lr=0.001, batch_size=8):
-    print(f"[DEBUG] Starting training with data_dir={data_dir}, n_epochs={n_epochs}, lr={lr}, batch_size={batch_size}")
+def main(config):
+    print(config)
+    
+    # Set random seed
+    set_seed(config.seed)
+    
+    # Create directories
+    create_directories(config)
+    
+    print(f"[DEBUG] Starting training with data_dir={config.data_dir}")
     
     # Load data
-    loader = GInRecDataLoader(data_dir).load_data()
+    print(f"[DEBUG] Loading data from {config.data_dir}...")
+    loader = GInRecDataLoader(config.data_dir).load_data()
+    print(f"[DEBUG] Data loaded successfully")
+    
+    print(f"[DEBUG] Building graph structure...")
     adj_list, adj_relation, n_nodes = loader.get_graph_structure()
     
     print(f"[DEBUG] Graph loaded: n_nodes={n_nodes}, adj_list size={len(adj_list)}")
@@ -103,6 +116,7 @@ def main(data_dir, n_epochs=100, lr=0.001, batch_size=8):
     print(f"[DEBUG] n_entities={n_entities}, n_users={n_users}")
     
     # Flatten all relations and find max
+    print(f"[DEBUG] Computing number of relations...")
     all_relations = []
     for rel_list in adj_relation.values():
         all_relations.extend(rel_list)
@@ -114,36 +128,79 @@ def main(data_dir, n_epochs=100, lr=0.001, batch_size=8):
     print(f"[DEBUG] n_relations={n_relations} (max_rel_from_adj={max_rel_from_adj}, max_rel_from_list={max_rel_from_list})")
     
     # Create model
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"[DEBUG] Using device: {device}")
+    print(f"[DEBUG] Using device: {config.device}")
     
-    model = GInRecSimple(n_entities, n_users, n_relations, device=device).to(device)
-    print(f"[DEBUG] Model created with {sum(p.numel() for p in model.parameters())} parameters")
+    print(f"[DEBUG] Creating model...")
+    model = GInRecSimple(
+        n_entities, 
+        n_users, 
+        n_relations,
+        entity_dim=config.entity_dim,
+        autoencoder_dims=config.autoencoder_dims,
+        conv_dims=config.conv_dims,
+        dropout=config.dropout,
+        device=config.device
+    ).to(config.device)
     
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Print model summary
+    print_model_summary(model)
+    
+    optimizer = optim.Adam(model.parameters(), lr=config.lr)
+    print(f"[DEBUG] Optimizer created")
+    
+    # Early stopping
+    early_stopping = EarlyStopping(patience=10, mode='max')
     
     # Training
-    train_samples = loader.get_train_samples()
+    print(f"[DEBUG] Generating training samples (this may take a while for large datasets)...")
+    train_samples = loader.get_train_samples(n_neg_samples=config.n_neg_samples)
     print(f"[DEBUG] Total training samples: {len(train_samples)}")
     
+    # Save config
+    config.save(f"{config.save_dir}/config.json")
+    
     best_ndcg = 0
-    for epoch in range(n_epochs):
-        print(f"\n[DEBUG] ===== Epoch {epoch+1}/{n_epochs} =====")
+    for epoch in range(config.n_epochs):
+        print(f"\n[DEBUG] ===== Epoch {epoch+1}/{config.n_epochs} =====")
         loss = train_epoch(model, optimizer, train_samples, adj_list, adj_relation,
-                          n_entities, batch_size)
+                          n_entities, batch_size=config.batch_size, ae_weight=config.ae_weight)
         
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % config.eval_interval == 0:
             print(f"[DEBUG] Running evaluation...")
-            recall, ndcg = evaluate(model, loader.test_data, adj_list, adj_relation)
-            print(f'Epoch {epoch+1}: Loss={loss:.4f}, Recall@20={recall:.4f}, NDCG@20={ndcg:.4f}')
+            recall, ndcg = evaluate(model, loader.test_data, adj_list, adj_relation, k=config.top_k)
+            
+            metrics = {
+                'loss': loss,
+                f'recall@{config.top_k}': recall,
+                f'ndcg@{config.top_k}': ndcg
+            }
+            
+            print(f'Epoch {epoch+1}: Loss={loss:.4f}, Recall@{config.top_k}={recall:.4f}, NDCG@{config.top_k}={ndcg:.4f}')
+            
+            # Log metrics
+            log_metrics(f"{config.save_dir}/{config.log_file}", epoch+1, metrics)
             
             if ndcg > best_ndcg:
                 best_ndcg = ndcg
                 print(f"[DEBUG] New best NDCG! Saving model...")
-                torch.save(model.state_dict(), 'best_model.pt')
+                torch.save({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'ndcg': best_ndcg,
+                    'recall': recall,
+                }, f"{config.save_dir}/best_model.pt")
+            
+            # Early stopping check
+            if early_stopping(ndcg):
+                print(f"[INFO] Early stopping triggered at epoch {epoch+1}")
+                break
     
     print(f'\n[DEBUG] Training completed!')
-    print(f'Best NDCG@20: {best_ndcg:.4f}')
+    print(f'Best NDCG@{config.top_k}: {best_ndcg:.4f}')
+    
+    return best_ndcg
 
 if __name__ == '__main__':
-    main('amazon-book')
+    config = parse_args()
+    main(config)

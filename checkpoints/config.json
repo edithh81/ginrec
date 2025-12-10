@@ -1,0 +1,25 @@
+{
+  "data_dir": "dummy",
+  "entity_dim": 64,
+  "autoencoder_dims": [
+    128,
+    32
+  ],
+  "conv_dims": [
+    32,
+    16
+  ],
+  "dropout": 0.1,
+  "gate_type": "concat",
+  "n_epochs": 100,
+  "batch_size": 1024,
+  "lr": 0.001,
+  "ae_weight": 0.001,
+  "n_neg_samples": 1,
+  "eval_interval": 5,
+  "top_k": 20,
+  "device": "cuda",
+  "seed": 42,
+  "save_dir": "checkpoints",
+  "log_file": "training.log"
+}
